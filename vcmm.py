@@ -26,9 +26,24 @@ def initial_prob(data, K, method):
     Output:
         z: NxK np array of assignment probabilities
     """
-    # TODO
-    z = np.arange()
-    return z
+    if method == 'kmeans':
+        n, d = data.shape
+
+        centroids_indices = np.random.choice(n, size=K, replace=False)
+        centroids = data[centroids_indices]
+
+        # Assign each point to centroid
+        z = np.zeros((n, K))
+        for i in range(n):
+            distances = np.sum((centroids - data[i])**2, axis=1)
+            centroid = np.argmin(distances)
+            z[i][centroid] = 1
+
+        return z / np.sum(z, axis=1, keepdims=True)  # Normalize
+
+    # More methods can be added below
+    else:
+        raise ValueError("Unknown method. Please specify a valid clustering method (e.g., 'kmeans').")
   
 def select_marginals(data, r):
     return families, parameters, u
