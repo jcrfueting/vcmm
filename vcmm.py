@@ -46,6 +46,25 @@ def initial_prob(data, K, method):
         raise ValueError("Unknown method. Please specify a valid clustering method (e.g., 'kmeans').")
   
 def select_marginals(data, r):
+    n, d = data.shape
+    families = []
+    parameters = []
+    u = np.zeros_like(data)
+
+    for i in range(d - 1):
+        for j in range(i + 1, d):
+            # Calculate soft_counts
+            soft_counts = r[:, np.newaxis] * r[:, np.newaxis].T
+
+            # Select best copula family using bicop.select
+            family, tau, _ = vcl.bicop.select(data[:, [i, j]], weights=soft_counts, families=vcl.BicopFamily.parametric)
+            families.append(family)
+            parameters.append(tau)
+
+            # Transform the data using selected family and tau
+            copula = vcl.BiCop(family, tau)
+            u_ij = copula.u(data[:, [i, j]])
+            u[:, [i, j]] = u_ij
     return families, parameters, u
 
 def select_tree_structure(u, copulas, trunclevel=1):
