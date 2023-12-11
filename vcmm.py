@@ -57,26 +57,28 @@ def select_marginals(data, r):
             soft_counts = r[:, np.newaxis] * r[:, np.newaxis].T
 
             # Select best copula family using bicop.select
-            family, tau, _ = vcl.bicop.select(data[:, [i, j]], weights=soft_counts, families=vcl.BicopFamily.parametric)
+            family, tau, _ = vcl.Bicop.select(data[:, [i, j]], weights=soft_counts, families=vcl.BicopFamily.parametric)
             families.append(family)
             parameters.append(tau)
 
-            # Transform the data using selected family and tau
-            copula = vcl.BiCop(family, tau)
-            u_ij = copula.u(data[:, [i, j]])
+            copula = vcl.Bicop(family)
+            copula.fit(data[:, [i, j]])
+
+            # Transform the data to uniform margins using fitted copula family
+            u_ij = copula.cdf(data[:, [i, j]])
             u[:, [i, j]] = u_ij
     return families, parameters, u
 
-def select_tree_structure(u, copulas, trunclevel=1):
-    return trees
+#def select_tree_structure(u, copulas, trunclevel=1):
+#    return trees
   
-def select_copulas(V, u):
-    return families, parameters
+#def select_copulas(V, u):
+#    return families, parameters
 
-def RVineStructureSelect(u, copulas, trunclevel=1):
-    V = select_tree_structure(u=u, copulas=copulas, trunclevel=trunclevel)
-    families, parameters = select_copulas(V, u)
-    return V, families, parameters
+def RVineStructureSelect(u, trunclevel=1):
+    vinecop = vcl.Vinecop()
+    V = vinecop.select(u, trunclevel=trunclevel)
+    return V, V.families, V.parameters
 
 def posterior_prob(data, pi, chi, psi):
     """
@@ -142,7 +144,7 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method, fitting_trunclevel=1
     
     # 2. initial model selection
     F, gamma, u = select_marginals(data, r)
-    V, families, parameters = RVineStructureSelect(u, copulas, trunclevel=truncation_level)
+    V, families, parameters = RVineStructureSelect(u, trunclevel=truncation_level)
     
     # 3. parameter estimation
     t = 0
