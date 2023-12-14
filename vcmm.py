@@ -91,7 +91,8 @@ def select_marginals(data, r):
             return dist.cdf(data, loc=par[-2], scale=par[-1])
 
     # TODO: go through stats for set of feasable candidates dists
-    candidates = [stats.norm, stats.gumbel_l]
+    #I added the ones used in the R implementation
+    candidates = [stats.norm, stats.gumbel_l, stats.cauchy, stats.gamma, stats.logistic, stats.lognorm, stats.skewnorm, stats.t, stats.skewcauchy, stats.loggamma]
     
     families = []
     parameters = []
@@ -147,6 +148,18 @@ def posterior_prob(data, pi, chi, psi):
     Output:
         z: NxK np array of assignment probabilities
     """
+    n = len(data)
+    K = len(pi)
+    z = np.zeros((n, K))
+
+    for i in range(n):
+        for k in range(K):
+            z[i, k] = pi[k]
+
+        #TODO:multiply each z[i,k] by g_j(x_i, psi_j)
+
+        #Normalize the probabilities for each data point
+        z[i] /= np.sum(z[i])
     return z
 
 def mixture_weights(r):
@@ -159,7 +172,7 @@ def mixture_weights(r):
     Output:
         pi: 1xK np array of mixture weights (soft group proportions)
     """
-    pi = r.sum(axis=0, keepdims=True)
+    pi = r.mean(axis=0, keepdims=True)
     return pi
   
 def marginal_parameters(r, data, F):
@@ -191,7 +204,7 @@ def pair_copula_parameters(r, data, F, gamma, V):
   
 
 
-def vcmm(data, K, tol=0.00001, maxiter=100, initial_method, fitting_trunclevel=1):
+def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1):
   
     n, d = data.shape
     
