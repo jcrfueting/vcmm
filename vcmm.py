@@ -4,6 +4,14 @@
 
 import numpy as np
 import pyvinecopulib as vcl
+import scipy.stats as stats
+
+### data for development and testing (currently only 2 dimensional)
+
+dfs = [np.loadtxt("project/EMGaussian."+t_flag) for t_flag in ["train", "test"]]
+
+# empirial pseudo copulas
+copula_dfs = [vcl.to_pseudo_obs(x) for x in dfs]
 
 ### functions
 
@@ -46,27 +54,73 @@ def initial_prob(data, K, method):
         raise ValueError("Unknown method. Please specify a valid clustering method (e.g., 'kmeans').")
   
 def select_marginals(data, r):
+    """
+    initial selection of marginal distributions and parameters
+    
+    Input:
+        data: NxD np array of data
+        r: posterior cluster probability
+        
+    Output:
+        families: KxD collection of scipy distributions
+        parameters: KxD collection of parameters
+        u: KxNxD np array of copula data
+    """
+    
     n, d = data.shape
+    _, k = r.shape
+    
+    c = r.argmax(axis=1)
+    
+    def bic(dist, par, data):
+        n = data.shape
+        n_par = par.__len__()
+        
+        if n_par > 2 :
+            llh = np.sum(dist.logpdf(data, par[:-2], loc=par[-2], scale=par[-1]))
+        else :
+            llh = np.sum(dist.logpdf(data, loc=par[-2], scale=par[-1]))
+        
+        return -2*llh-n_par*np.log(n)
+      
+    def u_fun(dist, par, data):
+        n_par = par.__len__()
+        if n_par > 2 :
+            return dist.cdf(data, par[:-2], loc=par[-2], scale=par[-1])
+        else :
+            return dist.cdf(data, loc=par[-2], scale=par[-1])
+
+    # TODO: go through stats for set of feasable candidates dists
+    candidates = [stats.norm, stats.gumbel_l]
+    
     families = []
     parameters = []
-    u = np.zeros_like(data)
-
-    for i in range(d - 1):
-        for j in range(i + 1, d):
-            # Calculate soft_counts
-            soft_counts = r[:, np.newaxis] * r[:, np.newaxis].T
-
-            # Select best copula family using bicop.select
-            family, tau, _ = vcl.Bicop.select(data[:, [i, j]], weights=soft_counts, families=vcl.BicopFamily.parametric)
-            families.append(family)
-            parameters.append(tau)
-
-            copula = vcl.Bicop(family)
-            copula.fit(data[:, [i, j]])
-
-            # Transform the data to uniform margins using fitted copula family
-            u_ij = copula.cdf(data[:, [i, j]])
-            u[:, [i, j]] = u_ij
+    u = []
+    
+    for i in range(k):
+        
+        k_data = data[c==i,:]
+        
+        k_families = []
+        k_parameters = []
+        k_u = []
+        
+        for j in range(d):
+          
+            d_data = k_data[:,j]
+            
+            candidate_parameters = [dist.fit(d_data) for dist in candidates]
+            BICs = [bic(cand, param, d_data) for cand, param in zip(candidates, candidate_parameters)]
+            idx = np.argmin(BICs)
+            
+            k_families.append(candidates[idx])
+            k_parameters.append(candidate_parameters[idx])
+            k_u = u_fun(candidates[idx], candidate_parameters[idx], data[:,j])
+            
+        families.append(k_families)
+        parameters.append(k_parameters)
+        u.append(k_u)
+        
     return families, parameters, u
 
 #def select_tree_structure(u, copulas, trunclevel=1):
@@ -105,6 +159,7 @@ def mixture_weights(r):
     Output:
         pi: 1xK np array of mixture weights (soft group proportions)
     """
+    pi = r.sum(axis=0, keepdims=True)
     return pi
   
 def marginal_parameters(r, data, F):
@@ -129,6 +184,7 @@ def pair_copula_parameters(r, data, F, gamma, V):
     Output:
         theta: structure of pair copula parameters (some parameters might be vectors)
     """
+    V
     return theta
   
 
