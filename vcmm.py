@@ -267,11 +267,25 @@ def pair_copula_parameters(r, data, F, gamma, u, V):
     CM-step 3
 
     Input:
-
+        r: NxK array of cluster probabilites
+        data: NxD array with data on original scale
+        F: KxD list with families of marginal distributions
+        gamma: Parameters
+        u: K item list of NxD np arrays of copula data
+        V: Vinecop Object representing the vine copula structure
     Output:
         theta: structure of pair copula parameters (some parameters might be vectors)
     """
-    V
+    theta = {}
+    n, d = data.shape
+    _, k = r.shape
+
+    for i in range(k):
+        for j in range(d):
+            family = V.get_family(i,j)
+            copula = vcl.Vinecop(family_set= family)
+            copula.fit(data[i,j])
+            theta[(i, j)] = copula.parameters
     return theta
   
 
