@@ -19,7 +19,37 @@ def loglike(data, F, gamma, V, pi, r):
     """
     log-likelihood of vine copula mixture
     """
-    llh = 0
+    n = len(data)
+    k = pi.shape[1]
+
+    def pdf(dist, par, data):
+        n_par = par.__len__()
+        if n_par > 2:
+            return dist.pdf(data, par[:-2], loc=par[-2], scale=par[-1])
+        else:
+            return dist.pdf(data, loc=par[-2], scale=par[-1])
+
+    def component_prob(data, F, gamma, u, V):
+        n, d = u.shape
+        marginal_prob = np.column_stack([pdf(f, g, data[:, i]) for f, g, i in zip(F, gamma, range(d))])
+        copula_prob = V.pdf(u)
+        return marginal_prob.prod(axis=1) * copula_prob
+
+    #Creating the latent variable z_i,j
+    max_indices = np.argmax(r, axis=1)
+    z = np.zeros((n, K), dtype=int)
+    for i in range(n):
+        max_index = max_indices[i]
+        z[i][max_index] = 1
+
+    g = np.column_stack([component_prob(data, F[i], gamma[i], u[i], V[i]) for i in range(k)])
+
+    # Calculating llh
+    llh=0
+    for i in range(n):
+        for j in range(k):
+            llh += z[i][j]*np.log(pi[j])+z[i][j]*np.log(g[j])
+
     return llh
 
 def initial_prob(data, K, method):
@@ -90,8 +120,6 @@ def select_marginals(data, r):
         else :
             return dist.cdf(data, loc=par[-2], scale=par[-1])
 
-    # TODO: go through stats for set of feasable candidates dists
-    # I added the ones used in the R implementation
     candidates = [stats.norm, stats.gumbel_l, stats.cauchy, stats.gamma, stats.logistic, stats.lognorm, stats.skewnorm, stats.t, stats.skewcauchy, stats.loggamma]
     
     families = []
