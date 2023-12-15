@@ -64,7 +64,7 @@ def select_marginals(data, r):
     Output:
         families: KxD collection of scipy distributions
         parameters: KxD collection of parameters
-        u: KxNxD np array of copula data
+        u: K item list of NxD np arrays of copula data
     """
     
     n, d = data.shape
@@ -91,7 +91,7 @@ def select_marginals(data, r):
             return dist.cdf(data, loc=par[-2], scale=par[-1])
 
     # TODO: go through stats for set of feasable candidates dists
-    #I added the ones used in the R implementation
+    # I added the ones used in the R implementation
     candidates = [stats.norm, stats.gumbel_l, stats.cauchy, stats.gamma, stats.logistic, stats.lognorm, stats.skewnorm, stats.t, stats.skewcauchy, stats.loggamma]
     
     families = []
@@ -116,11 +116,11 @@ def select_marginals(data, r):
             
             k_families.append(candidates[idx])
             k_parameters.append(candidate_parameters[idx])
-            k_u = u_fun(candidates[idx], candidate_parameters[idx], data[:,j])
+            k_u.append(u_fun(candidates[idx], candidate_parameters[idx], data[:,j]))
             
         families.append(k_families)
         parameters.append(k_parameters)
-        u.append(k_u)
+        u.append(np.column_stack(k_u))
         
     return families, parameters, u
 
@@ -131,36 +131,56 @@ def select_marginals(data, r):
 #    return families, parameters
 
 def RVineStructureSelect(u, trunclevel=1):
-    vinecop = vcl.Vinecop()
-    V = vinecop.select(u, trunclevel=trunclevel)
-    return V, V.families, V.parameters
+    
+    k = len(u)
+    n, d = u[0].shape
+    
+    copula_candidates = [vcl.BicopFamily.__members__[x] for x in ["bb1","bb6","bb7","bb8","clayton","frank","gaussian","gumbel","indep","joe","student"]]
+    fitctrl = vcl.FitControlsVinecop(family_set=copula_candidates, trunc_lvl=trunclevel)
+    
+    V = [vcl.Vinecop(data=u[i], controls=fitctrl) for i in range(k)]
+    
+    return V
 
-def posterior_prob(data, pi, chi, psi):
+
+def posterior_prob(data, pi, F, gamma, u, V):
     """
     E-step
 
     Input:
         data: NxD np array of data
         pi: 
-        chi: 
-        psi
+        F: 
+        gamma:
+        V:
 
     Output:
         z: NxK np array of assignment probabilities
     """
     n = len(data)
-    K = len(pi)
-    z = np.zeros((n, K))
+    k = pi.shape[1]
+    
+    def pdf(dist, par, data):
+        n_par = par.__len__()
+        if n_par > 2 :
+            return dist.pdf(data, par[:-2], loc=par[-2], scale=par[-1])
+        else :
+            return dist.pdf(data, loc=par[-2], scale=par[-1])
+    
+    def component_prob(data, F, gamma, u, V):
+        n, d = u.shape
+        marginal_prob = np.column_stack([pdf(f, g, data[:,i]) for f, g, i in zip(F, gamma, range(d))])
+        copula_prob = V.pdf(u)
+        return marginal_prob.prod(axis=1)*copula_prob
+        
+    g = np.column_stack([component_prob(data, F[i], gamma[i], u[i], V[i]) for i in range(k)])
+    
+    pig = g*pi
+    
+    r = pig/pig.sum(axis=1, keepdims=True)
+    
+    return r
 
-    for i in range(n):
-        for k in range(K):
-            z[i, k] = pi[k]
-
-        #TODO:multiply each z[i,k] by g_j(x_i, psi_j)
-
-        #Normalize the probabilities for each data point
-        z[i] /= np.sum(z[i])
-    return z
 
 def mixture_weights(r):
     """
@@ -210,10 +230,11 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
     
     # 1. initial assignment
     r = initial_prob(data, K, method=initial_method)
+    pi = mixture_weights(r)
     
     # 2. initial model selection
     F, gamma, u = select_marginals(data, r)
-    V, families, parameters = RVineStructureSelect(u, trunclevel=truncation_level)
+    V = RVineStructureSelect(u, trunclevel=fitting_trunclevel)
     
     # 3. parameter estimation
     t = 0
@@ -224,7 +245,7 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
       theta_old = theta
       
       # E step
-      r = posterior_prob()
+      r = posterior_prob(data, pi, F, gamma, u, V)
       
       # CM step 1
       pi = mixture_weights(r)
@@ -248,14 +269,14 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
     
     # 5. final model selection
     F, gamma, u = select_marginals(data, r)
-    V, families, parameters = RVineStructureSelect(u, copulas, trunclevel=d-1)
+    V = RVineStructureSelect(u, copulas, trunclevel=d-1)
     
     # 6. final cluster assignment
-    c = posterior_prob().argmax(axis=1)
+    c = posterior_prob(data, pi, F, gamma, u, V).argmax(axis=1)
     
     # classifier
     def predict(x):
-        pred_prob = posterior_prob()
+        pred_prob = posterior_prob(data, pi, F, gamma, u, V)
         return pred_prob.argmax(axis=1), pred_prob
     
     return c, F, gamma, V, B, theta, pi, r, predict
