@@ -202,13 +202,39 @@ def marginal_parameters(r, data, F):
     Input:
       r: NxK array of cluster probabilites
       data: NxD array with data on original scale
-      F: KxD array with families of marginal distributions
+      F: KxD list with families of marginal distributions
     Output:
-        gamma: KxD structure of parameters (some parameters might be vectors)
+        parameters: KxD structure of parameters (some parameters might be vectors)
+        u: K item list of NxD np arrays of copula data
     """
-    return gamma
+    n, d = data.shape
+    _, k = r.shape
+    
+    c = r.argmax(axis=1)
+
+    parameters = []
+    u = []
+    
+    for i in range(k):
+        
+        k_data = data[c==i,:]
+        k_parameters = []
+        k_u = []
+        
+        for j in range(d):
+          
+            d_data = k_data[:,j]
+            new_par = F[i][j].fit(d_data)
+            k_parameters.append(new_par)
+            k_u.append(u_fun(F[i][j], new_par, data[:,j]))
+            
+        parameters.append(k_parameters)
+        u.append(np.column_stack(k_u))
+    
+    return parameters, u
   
-def pair_copula_parameters(r, data, F, gamma, V):
+  
+def pair_copula_parameters(r, data, F, gamma, u, V):
     """
     CM-step 3
 
@@ -251,10 +277,10 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
       pi = mixture_weights(r)
       
       # CM step 2
-      gamma = marginal_parameters(r, data, F)
+      gamma, u = marginal_parameters(r, data, F)
       
       # CM step 3
-      theta = pair_copula_parameters(r, data, F, gamma, V)
+      theta = pair_copula_parameters(r, data, F, gamma, u, V)
       
       # stopping condition(s)
       llh = loglik(data, r_old, gamma_old, theta_old)
