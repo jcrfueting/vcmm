@@ -15,41 +15,81 @@ copula_dfs = [vcl.to_pseudo_obs(x) for x in dfs]
 
 ### functions
 
-def loglike(data, F, gamma, V, pi, r):
+## helpers
+
+def pdf(dist, par, data):
+    """
+    pdf of a scipy distribution object
+    """
+    n_par = par.__len__()
+    if n_par > 2:
+        return dist.pdf(data, par[:-2], loc=par[-2], scale=par[-1])
+    else:
+        return dist.pdf(data, loc=par[-2], scale=par[-1])
+      
+def logpdf(dist, par, data):
+    """
+    logpdf of a scipy distribution object
+    """
+    n_par = par.__len__()
+    if n_par > 2:
+        return dist.logpdf(data, par[:-2], loc=par[-2], scale=par[-1])
+    else:
+        return dist.logpdf(data, loc=par[-2], scale=par[-1])
+
+def component_prob(data, F, gamma, u, V):
+    """
+    density of a singular VCMM component
+    """
+    n, d = u.shape
+    marginal_prob = np.column_stack([pdf(f, g, data[:, i]) for f, g, i in zip(F, gamma, range(d))])
+    copula_prob = V.pdf(u)
+    return marginal_prob.prod(axis=1) * copula_prob
+  
+def bic(dist, par, data):
+    """
+    Bayesian Information Criteion of a scipy distribution object
+    """
+    n = data.shape
+    n_par = par.__len__()
+    
+    if n_par > 2 :
+        llh = np.sum(dist.logpdf(data, par[:-2], loc=par[-2], scale=par[-1]))
+    else :
+        llh = np.sum(dist.logpdf(data, loc=par[-2], scale=par[-1]))
+    
+    return -2*llh-n_par*np.log(n)
+      
+def u_fun(dist, par, data):
+    """
+    probability transform for a scipy distribution object
+    """
+    n_par = par.__len__()
+    if n_par > 2 :
+        return dist.cdf(data, par[:-2], loc=par[-2], scale=par[-1])
+    else :
+        return dist.cdf(data, loc=par[-2], scale=par[-1])  
+
+
+## parts 
+
+def loglike(data, F, gamma, u, V, pi, r):
     """
     log-likelihood of vine copula mixture
     """
-    n = len(data)
+    n, d = data.shape
     k = pi.shape[1]
 
-    def pdf(dist, par, data):
-        n_par = par.__len__()
-        if n_par > 2:
-            return dist.pdf(data, par[:-2], loc=par[-2], scale=par[-1])
-        else:
-            return dist.pdf(data, loc=par[-2], scale=par[-1])
-
-    def component_prob(data, F, gamma, u, V):
-        n, d = u.shape
-        marginal_prob = np.column_stack([pdf(f, g, data[:, i]) for f, g, i in zip(F, gamma, range(d))])
-        copula_prob = V.pdf(u)
-        return marginal_prob.prod(axis=1) * copula_prob
-
     #Creating the latent variable z_i,j
-    max_indices = np.argmax(r, axis=1)
-    z = np.zeros((n, K), dtype=int)
-    for i in range(n):
-        max_index = max_indices[i]
-        z[i][max_index] = 1
-
-    g = np.column_stack([component_prob(data, F[i], gamma[i], u[i], V[i]) for i in range(k)])
-
+    z = np.apply_along_axis(lambda row : row==row.max(), 1, r) + 0
+    
+    log_f = np.column_stack([np.column_stack([logpdf(f, g, data[:, i]) for f, g, i in zip(F[j], gamma[j], range(d))]).sum(axis=1) for j in range(k)])
+    
+    log_c = np.log(np.column_stack([V[i].pdf(u[i]) for i in range(k)]))
+    
     # Calculating llh
-    llh=0
-    for i in range(n):
-        for j in range(k):
-            llh += z[i][j]*np.log(pi[j])+z[i][j]*np.log(g[j])
-
+    llh = np.sum(z*np.log(pi)) + np.sum(z*log_f) + np.sum(z*log_c)
+    
     return llh
 
 def initial_prob(data, K, method):
@@ -102,25 +142,10 @@ def select_marginals(data, r):
     
     c = r.argmax(axis=1)
     
-    def bic(dist, par, data):
-        n = data.shape
-        n_par = par.__len__()
-        
-        if n_par > 2 :
-            llh = np.sum(dist.logpdf(data, par[:-2], loc=par[-2], scale=par[-1]))
-        else :
-            llh = np.sum(dist.logpdf(data, loc=par[-2], scale=par[-1]))
-        
-        return -2*llh-n_par*np.log(n)
-      
-    def u_fun(dist, par, data):
-        n_par = par.__len__()
-        if n_par > 2 :
-            return dist.cdf(data, par[:-2], loc=par[-2], scale=par[-1])
-        else :
-            return dist.cdf(data, loc=par[-2], scale=par[-1])
-
-    candidates = [stats.norm, stats.gumbel_l, stats.cauchy, stats.gamma, stats.logistic, stats.lognorm, stats.skewnorm, stats.t, stats.skewcauchy, stats.loggamma]
+    
+    # candidates = [stats.norm, stats.gumbel_l, stats.cauchy, stats.gamma, stats.logistic, stats.lognorm, stats.skewnorm, stats.t, stats.skewcauchy, stats.loggamma]
+    # restricting candidate set for now to get a first run
+    candidates = [stats.norm, stats.t]
     
     families = []
     parameters = []
@@ -152,11 +177,6 @@ def select_marginals(data, r):
         
     return families, parameters, u
 
-#def select_tree_structure(u, copulas, trunclevel=1):
-#    return trees
-  
-#def select_copulas(V, u):
-#    return families, parameters
 
 def RVineStructureSelect(u, trunclevel=1):
     
@@ -180,6 +200,7 @@ def posterior_prob(data, pi, F, gamma, u, V):
         pi: 
         F: 
         gamma:
+        u:
         V:
 
     Output:
@@ -187,20 +208,7 @@ def posterior_prob(data, pi, F, gamma, u, V):
     """
     n = len(data)
     k = pi.shape[1]
-    
-    def pdf(dist, par, data):
-        n_par = par.__len__()
-        if n_par > 2 :
-            return dist.pdf(data, par[:-2], loc=par[-2], scale=par[-1])
-        else :
-            return dist.pdf(data, loc=par[-2], scale=par[-1])
-    
-    def component_prob(data, F, gamma, u, V):
-        n, d = u.shape
-        marginal_prob = np.column_stack([pdf(f, g, data[:,i]) for f, g, i in zip(F, gamma, range(d))])
-        copula_prob = V.pdf(u)
-        return marginal_prob.prod(axis=1)*copula_prob
-        
+      
     g = np.column_stack([component_prob(data, F[i], gamma[i], u[i], V[i]) for i in range(k)])
     
     pig = g*pi
@@ -274,23 +282,23 @@ def pair_copula_parameters(r, data, F, gamma, u, V):
         u: K item list of NxD np arrays of copula data
         V: Vinecop Object representing the vine copula structure
     Output:
-        theta: structure of pair copula parameters (some parameters might be vectors)
+        V: updated VineCop structure
     """
-    theta = {}
     n, d = data.shape
     _, k = r.shape
-
-    for i in range(k):
-        for j in range(d):
-            family = V.get_family(i,j)
-            copula = vcl.Vinecop(family_set= family)
-            copula.fit(data[i,j])
-            theta[(i, j)] = copula.parameters
-    return theta
+    
+    def update_pair_param(v, u_k):
+        new_V = vcl.Vinecop(structure=v.structure, pair_copulas=v.pair_copulas)
+        new_V.select(data=u_k)
+        return new_V    
+    
+    V = [update_pair_param(V[i], u[i]) for i in range(k)]
+      
+    return V
   
 
   
-
+## main function
 
 def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1):
   
@@ -306,11 +314,10 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
     
     # 3. parameter estimation
     t = 0
+    llh = loglike(data, F, gamma, u, V, pi, r)
+    
     while True :
       llh_old = llh
-      r_old = r
-      gamma_old = gamma
-      theta_old = theta
       
       # E step
       r = posterior_prob(data, pi, F, gamma, u, V)
@@ -322,10 +329,10 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
       gamma, u = marginal_parameters(r, data, F)
       
       # CM step 3
-      theta = pair_copula_parameters(r, data, F, gamma, u, V)
+      V = pair_copula_parameters(r, data, F, gamma, u, V)
       
       # stopping condition(s)
-      llh = loglik(data, r_old, gamma_old, theta_old)
+      llh = loglike(data, F, gamma, u, V, pi, r)
       llhdiff = (llh-llh_old)/llh_old
       if llhdiff < tol :
           break
@@ -337,7 +344,7 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
     
     # 5. final model selection
     F, gamma, u = select_marginals(data, r)
-    V = RVineStructureSelect(u, copulas, trunclevel=d-1)
+    V = RVineStructureSelect(u, trunclevel=d-1)
     
     # 6. final cluster assignment
     c = posterior_prob(data, pi, F, gamma, u, V).argmax(axis=1)
@@ -347,8 +354,9 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
         pred_prob = posterior_prob(data, pi, F, gamma, u, V)
         return pred_prob.argmax(axis=1), pred_prob
     
-    return c, F, gamma, V, B, theta, pi, r, predict
-  
+    return c, F, gamma, V, pi, r, predict
+
+vcmm(dfs[1], 4)
 
 ### simulation study
 
