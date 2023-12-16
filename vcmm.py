@@ -300,7 +300,7 @@ def pair_copula_parameters(r, data, F, gamma, u, V):
   
 ## main function
 
-def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1):
+def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1, trace=False):
   
     n, d = data.shape
     
@@ -317,6 +317,10 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
     llh = loglike(data, F, gamma, u, V, pi, r)
     
     while True :
+      
+      if trace :
+          print("iter:",t,"llh:",llh,"proportions:",pi, sep=" ")
+      
       llh_old = llh
       
       # E step
@@ -333,11 +337,14 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
       
       # stopping condition(s)
       llh = loglike(data, F, gamma, u, V, pi, r)
-      llhdiff = (llh-llh_old)/llh_old
+      llhdiff = (llh-llh_old)/-llh_old
+      
       if llhdiff < tol :
           break
       if t >= maxiter :
           break
+        
+      t = t+1
         
     # 4. temporary cluster assignment
     c = r.argmax(axis=1)
@@ -351,12 +358,113 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
     
     # classifier
     def predict(x):
-        pred_prob = posterior_prob(data, pi, F, gamma, u, V)
+        ux = [np.column_stack([u_fun(F[i][j], gamma[i][j], x[:,j]) for j in range(d)]) for i in range(K)]
+        pred_prob = posterior_prob(x, pi, F, gamma, ux, V)
         return pred_prob.argmax(axis=1), pred_prob
     
     return c, F, gamma, V, pi, r, predict
 
-vcmm(dfs[1], 4)
+
+## plotting functions
+
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+# taken from HW3 code provided to us
+def show_classification(X_train, X_test, VCMM_predictor):
+
+    shapes = ['o', '*', 'v', '+']
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b',
+              '#e377c2', '#7f7f7f', '#bcbd22']
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+
+    for (ax, data, title) in [(ax1, X_train, 'Training Set'), (ax2, X_test, 'Test Set')]:
+        pred_labels, obj = VCMM_predictor(data)
+        print("K-Means Objective on " + title)
+        cs = [colors[int(_) % len(colors)] for _ in pred_labels]
+        ax.scatter(data[:, 0], data[:, 1], alpha=0.5, c=cs)
+        ax.set_title(title)
+        ax.set_xlim(-12, 12), ax.set_ylim(-12, 12)
+        ax.set_aspect('equal')
+
+    plt.show()
+    print('\n')
+    
+    
+def show_contour(X_train, predictor):
+    xlim = [X_train[:,0].min(), X_train[:,0].max()]
+    ylim = [X_train[:,1].min(), X_train[:,1].max()]
+    
+    x = np.linspace(xlim[0], xlim[1], num=100)
+    y = np.linspace(ylim[0], ylim[1], num=100)
+    
+    xv, yv = np.meshgrid(x, y)
+    
+    z, probs = predictor(np.column_stack((xv.flatten(), yv.flatten())))
+    
+    fig = plt.figure()  # an empty figure with no axes
+    grid = int(np.ceil(np.sqrt(probs.shape[1])))
+    fig, ax_lst = plt.subplots(grid, grid)  # a figure with a 2x2 grid of Axes
+    
+    k = 0
+    for i in range(grid):
+        for j in range(grid):
+            ax_lst[i,j].contourf(xv, yv, probs[:,k].reshape((100,100)), cmap=mpl.colormaps["Blues"])
+            ax_lst[i,j].set_title("Component "+str(k))
+            k += 1
+    
+    fig.suptitle("Contour Plots of VCMM Component Densities")
+    
+    plt.show()
+    print('\n')
+    
+
+def show_boundary(X_train, predictor):
+    xlim = [X_train[:,0].min(), X_train[:,0].max()]
+    ylim = [X_train[:,1].min(), X_train[:,1].max()]
+    
+    x = np.linspace(xlim[0], xlim[1], num=100)
+    y = np.linspace(ylim[0], ylim[1], num=100)
+    
+    xv, yv = np.meshgrid(x, y)
+    
+    z, probs = predictor(np.column_stack((xv.flatten(), yv.flatten())))
+    
+    
+    shapes = ['o', '*', 'v', '+']
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b',
+              '#e377c2', '#7f7f7f', '#bcbd22']
+
+    
+    
+    pred_labels, probs = predictor(X_train)
+    
+    cs = [colors[int(_) % len(colors)] for _ in pred_labels]
+    
+    fig = plt.figure()
+    ax = fig.add_subplot()
+    
+    ax.scatter(X_train[:, 0], X_train[:, 1], alpha=0.5, c=cs)
+    fig.suptitle("Cluster Assignment and Decision Boundary")
+    # ax.set_xlim(xlim)
+    # ax.set_ylim(ylim)
+    ax.contour(xv, yv, z.reshape((100,100)), colors="blue")
+
+    plt.show()
+    print('\n')
+    
+    # plt.contour(xv, yv, z.reshape((100,100)), colors="blue")
+    # plt.show()
+    
+
+assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(dfs[1], K=4, trace=True)
+
+show_classification(dfs[0], dfs[1], predictor)
+
+show_contour(dfs[0], predictor)
+
+show_boundary(dfs[0], predictor)
 
 ### simulation study
 
