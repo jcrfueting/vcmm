@@ -265,7 +265,7 @@ def loglike(data, F, gamma, u, V, pi, r):
     
     return llh
 
-def initial_prob(data, K, method):
+def initial_prob(data, K, method, supervised=False, labels=None):
     """
     initial cluster assignment probabilities in VCMM algorithm
 
@@ -277,6 +277,11 @@ def initial_prob(data, K, method):
     Output:
         z: NxK np array of assignment probabilities
     """
+    if supervised :
+        z = np.zeros((n, K))
+        for i in range(n):
+            z[i,int(labels[i])] = 1
+        
     if method == 'kmeans':
         n, d = data.shape
 
@@ -369,7 +374,7 @@ def RVineStructureSelect(u, trunclevel=1):
     return V
 
 
-def posterior_prob(data, pi, F, gamma, u, V):
+def posterior_prob(data, pi, F, gamma, u, V, r=None, supervised=False):
     """
     E-step
 
@@ -384,6 +389,9 @@ def posterior_prob(data, pi, F, gamma, u, V):
     Output:
         z: NxK np array of assignment probabilities
     """
+    if supervised : 
+        return r
+    
     n = len(data)
     k = pi.shape[1]
       
@@ -482,12 +490,28 @@ def pair_copula_parameters(r, data, F, gamma, u, V):
   
 ## main function
 
-def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1, trace=False):
-  
+def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1, trace=False):
+    
+    if (K==None) and (labels==None) :
+        raise ValueError("Provide K for unsupervised VCMM or labels for supervised VCMM.")
+      
+    elif (K!=None) and (labels!=None) :
+        if K!=len(np.unique(labels)) :
+            raise ValueError("Number of groups K does not match number of unique labels.")
+        supervised = True
+        
+    elif (K==None) and (labels!=None) :
+        K = len(np.unique(labels))
+        supervised = True
+        
+    elif (K!=None) and (labels==None):
+        supervised = False
+    
     n, d = data.shape
     
+    # TODO: unexpected ident error here somehow...
     # 1. initial assignment
-    r = initial_prob(data, K, method=initial_method)
+    r = initial_prob(data, K, method=initial_method, supervised, labels)
     pi = mixture_weights(r)
     
     # 2. initial model selection
@@ -506,7 +530,7 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
       llh_old = llh
       
       # E step
-      r = posterior_prob(data, pi, F, gamma, u, V)
+      r = posterior_prob(data, pi, F, gamma, u, V, r, supervised)
       
       # CM step 1
       pi = mixture_weights(r)
@@ -528,6 +552,7 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
         
       t = t+1
         
+    
     # 4. temporary cluster assignment
     c = r.argmax(axis=1)
     
@@ -536,12 +561,12 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
     V = RVineStructureSelect(u, trunclevel=d-1)
     
     # 6. final cluster assignment
-    c = posterior_prob(data, pi, F, gamma, u, V).argmax(axis=1)
+    c = posterior_prob(data, pi, F, gamma, u, V, r, supervised).argmax(axis=1)
     
     # classifier
     def predict(x):
         ux = [np.column_stack([u_fun(F[i][j], gamma[i][j], x[:,j]) for j in range(d)]) for i in range(K)]
-        pred_prob = posterior_prob(x, pi, F, gamma, ux, V)
+        pred_prob = posterior_prob(x, pi, F, gamma, ux, V, r, supervised=False)
         pred_dens = posterior_density(x, pi, F, gamma, ux, V)
         return pred_prob.argmax(axis=1), pred_prob, pred_dens
     
