@@ -2,13 +2,14 @@
 ###   Vine Copula Mixture Models
 ###
 
+import os
 import numpy as np
 import pyvinecopulib as vcl
 import scipy.stats as stats
 
 ### data for development and testing (currently only 2 dimensional)
 
-dfs = [np.loadtxt("project/EMGaussian."+t_flag) for t_flag in ["train", "test"]]
+dfs = [np.loadtxt(os.getcwd()+"/EMGaussian."+t_flag) for t_flag in ["train", "test"]]
 
 # empirial pseudo copulas
 copula_dfs = [vcl.to_pseudo_obs(x) for x in dfs]
@@ -508,10 +509,9 @@ def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="km
         supervised = False
     
     n, d = data.shape
-    
-    # TODO: unexpected ident error here somehow...
+
     # 1. initial assignment
-    r = initial_prob(data, K, method=initial_method, supervised, labels)
+    r = initial_prob(data, K, method=initial_method, supervised=supervised, labels=labels)
     pi = mixture_weights(r)
     
     # 2. initial model selection
@@ -685,13 +685,13 @@ show_boundary(dfs[0], predictor)
 
 import pandas as pd
 
-ais = pd.read_csv("project/AIS.csv")
+ais = pd.read_csv(os.getcwd()+"/AIS.csv")
 ais_np = ais.iloc[:,2:].to_numpy()
 
-breastcancer = pd.read_csv("project/BreastCancer.csv")
+breastcancer = pd.read_csv(os.getcwd()+"/BreastCancer.csv")
 bc_np = breastcancer.iloc[:,1:(breastcancer.shape[1]-1)].to_numpy()
 
-protein = pd.read_table("project/sachs.data.txt").to_numpy()
+protein = pd.read_table(os.getcwd()+"/sachs.data.txt").to_numpy()
 
 # right now ais and breastcancer fail to fit...
 assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(protein, K=4, trace=True, initial_method="gmm")
