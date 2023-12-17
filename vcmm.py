@@ -15,6 +15,179 @@ copula_dfs = [vcl.to_pseudo_obs(x) for x in dfs]
 
 ### functions
 
+## GMM from HW3
+
+def KMeans(X, K=1):
+    # helper functions
+    def dist(p1, p2):
+        return np.linalg.norm(p1-p2)
+
+    def least_dist(r, cents):
+        d = np.apply_along_axis(lambda c: dist(c, r), 1, cents)
+        return d.argmin()
+
+    def loss(x, cent):
+        return np.apply_along_axis(lambda r: dist(cent, r), 1, x).sum()
+    
+    n, d = X.shape
+    
+    # fitting parameters
+    MAX_ITER = 100
+    t = 0
+    E_old = -np.ones(X.shape[0])
+    E = E_old
+
+    # fitting procedure
+    centroids = np.random.randn(K, d)
+    while(True):
+        t = t + 1
+        E_old = E
+
+        # E step
+        E = np.apply_along_axis(lambda row: least_dist(row, centroids), 1, X)
+
+        # M step
+        centroids = np.stack([X[E==k,:].mean(axis=0) for k in np.arange(K)])
+
+        # stopping if no change in assignment or max iter reached
+        if (E_old == E).all() :
+            break
+        if t >= MAX_ITER :
+            break
+
+
+    def KMeans_predictor(inX):
+        pred_labels = np.apply_along_axis(lambda row: least_dist(row, centroids),
+                                          1, inX)
+        return pred_labels, 0
+
+    return centroids, KMeans_predictor
+
+def GaussianMixture(X, K=1, use_full_cov=True):
+    """
+    Estimates the parameters of a Gaussian mixture model using training data X
+
+    **Important:** The locations of the centroids must be initialized using your
+    K-Means code! With this information, initialize the proportions and variances
+    accordingly.
+
+        Inputs:
+            X: [nx2] matrix of inputs
+            K: [int] number of mixture components to use
+            use_full_cov: [bool] if True, estimate a full covariance for each
+                mixture component. Else, we use a scaled identity for each
+                component (in this case each component might have a
+                different scaling of the identity: Sigma_i = sigma_i * I).
+
+        Returns:
+            pi: [K] vector of proportion of each class
+            centroids: [Kx2] matrix of estimated centroid locations
+            sigmas: [Kx2x2] tensor of estimated covariance matrices
+            MoG_predictor: function taking a matrix inX and returning the
+                predicted cluster number (starting from 0 to K-1) for each row
+                of inX; and the normalized log-likelihood (i.e., ln(p(inX)) divided by the
+                number of rows of inX).
+    """
+
+    def norm_kernel(x, mu, sigma):
+        z = np.sqrt(np.linalg.det(sigma))
+        siginv = np.linalg.inv(sigma)
+        quadform = np.apply_along_axis(lambda r: r @ siginv @ r.T, 1, x-mu)
+        return 1/z*np.exp(-.5 * quadform).reshape(-1,1)
+
+    def tau_fun(x, m, sig, p):
+        pxk = np.column_stack([norm_kernel(x, m[i,:], sig[i,:])
+                               for i in np.arange(sig.shape[0])])
+        pipxk = pxk*p
+        return pipxk/np.column_stack(sig.shape[0]*[pipxk.sum(axis=1)])
+
+    def sigk2(x, m, tk):
+        d = m.shape[0]
+        return np.sum(np.diag(np.cov(x-m, rowvar=False, aweights=tk)))/d
+
+    def loglik(x, mus, sigmas, pi):
+        unscaled = np.column_stack([norm_kernel(x, mus[i,:], sigmas[i,:])
+                               for i in np.arange(sigmas.shape[0])])
+        unscaled = unscaled*pi
+        n, d = x.shape
+        omitted_factor = -n*d/2*np.log(2*np.pi)
+        return omitted_factor+np.log(unscaled.sum(axis=1)).sum()
+    
+    n, d = X.shape
+
+    # hyperparams
+    MAX_ITER = 100
+    INIT_SIG_MULT = 10
+    LOGLIK_TOL = 0.01
+
+    # Initialize centroids using KMeans
+    centroids, kmpred = KMeans(X, K)
+
+    # initialize pi with proportions from KMeans
+    predictions, _ = kmpred(X)
+    pi = np.array([np.mean(predictions==k) for k in np.arange(K)])
+
+    # initialize sigma as large and spherical
+    sigmas = np.concatenate([np.var(X)*INIT_SIG_MULT * np.eye(d)[np.newaxis, ...]
+                             for i in range(K)], axis=0)
+
+    t = 0
+    ll_old = loglik(X, centroids, sigmas, pi)
+    ll = ll_old
+
+    # estimation
+    while(True):
+        t = t + 1
+
+        # E step
+        tau = tau_fun(X, centroids, sigmas, pi)
+
+        # M step
+        softcount = tau.sum(axis=0)
+        pi = softcount/X.shape[0]
+        centroids = np.stack([(X*np.column_stack(d*[tau[:,k]])).sum(axis=0)/softcount[k]
+                              for k in np.arange(K)])
+
+        if use_full_cov :
+            sigmas = np.concatenate([np.cov(X, aweights=tau[:,k], rowvar=False)[np.newaxis, ...]
+                                     for k in np.arange(K)], axis=0)
+
+        else :
+            sigmak2 = [sigk2(X, centroids[k,:], tau[:,k])
+                       for k in np.arange(K)]
+            sigmas = np.concatenate([sigmak2[k] * np.eye(d)[np.newaxis, ...]
+                                     for k in range(K)], axis=0)
+
+
+        # stopping
+        ll_old = ll
+        ll = loglik(X, centroids, sigmas, pi)
+
+        if (ll-ll_old) < LOGLIK_TOL :
+            break
+        if t >= MAX_ITER :
+            break
+
+
+    def MoG_predictor(inX):
+        """
+        # Use parameters from above to predict cluster for each row of inX
+
+            Inputs:
+                inX: [mx2] matrix of inputs
+
+            Returns:
+                pred_labels: [m] array of predicted cluster labels
+                norm_loglike: [float] the log-likelihood of inX, i.e. ln(p(inX)),
+                    divided by the number of rows of inX.
+        """
+        pred_probs = tau_fun(inX, centroids, sigmas, pi)
+        pred_labels =  pred_probs.argmax(axis=1)
+
+        return pred_labels, pred_probs
+
+    return pi, centroids, sigmas, MoG_predictor
+
 ## helpers
 
 def pdf(dist, par, data):
@@ -118,7 +291,12 @@ def initial_prob(data, K, method):
             z[i][centroid] = 1
 
         return z / np.sum(z, axis=1, keepdims=True)  # Normalize
-
+      
+    elif method=="gmm":
+        pi, centroids, sigmas, predictor = GaussianMixture(data, K=K)
+        z, r = predictor(data)
+        return np.apply_along_axis(lambda row : row==row.max(), 1, r)+0
+      
     # More methods can be added below
     else:
         raise ValueError("Unknown method. Please specify a valid clustering method (e.g., 'kmeans').")
@@ -217,6 +395,10 @@ def posterior_prob(data, pi, F, gamma, u, V):
     
     return r
 
+def posterior_density(data, pi, F, gamma, u, V):
+    k = pi.shape[1]
+    g = np.column_stack([component_prob(data, F[i], gamma[i], u[i], V[i]) for i in range(k)])
+    return g*pi
 
 def mixture_weights(r):
     """
@@ -360,7 +542,8 @@ def vcmm(data, K, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_tru
     def predict(x):
         ux = [np.column_stack([u_fun(F[i][j], gamma[i][j], x[:,j]) for j in range(d)]) for i in range(K)]
         pred_prob = posterior_prob(x, pi, F, gamma, ux, V)
-        return pred_prob.argmax(axis=1), pred_prob
+        pred_dens = posterior_density(x, pi, F, gamma, ux, V)
+        return pred_prob.argmax(axis=1), pred_prob, pred_dens
     
     return c, F, gamma, V, pi, r, predict
 
@@ -380,7 +563,7 @@ def show_classification(X_train, X_test, VCMM_predictor):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
     for (ax, data, title) in [(ax1, X_train, 'Training Set'), (ax2, X_test, 'Test Set')]:
-        pred_labels, obj = VCMM_predictor(data)
+        pred_labels, obj, _ = VCMM_predictor(data)
         print("K-Means Objective on " + title)
         cs = [colors[int(_) % len(colors)] for _ in pred_labels]
         ax.scatter(data[:, 0], data[:, 1], alpha=0.5, c=cs)
@@ -392,7 +575,7 @@ def show_classification(X_train, X_test, VCMM_predictor):
     print('\n')
     
     
-def show_contour(X_train, predictor):
+def show_contour(X_train, predictor, contour="density"):
     xlim = [X_train[:,0].min(), X_train[:,0].max()]
     ylim = [X_train[:,1].min(), X_train[:,1].max()]
     
@@ -401,16 +584,21 @@ def show_contour(X_train, predictor):
     
     xv, yv = np.meshgrid(x, y)
     
-    z, probs = predictor(np.column_stack((xv.flatten(), yv.flatten())))
+    z, probs, densities = predictor(np.column_stack((xv.flatten(), yv.flatten())))
+    
+    if contour=="density":
+       plotz = densities
+    elif contour=="probability":
+       plotz = probs
     
     fig = plt.figure()  # an empty figure with no axes
-    grid = int(np.ceil(np.sqrt(probs.shape[1])))
+    grid = int(np.ceil(np.sqrt(plotz.shape[1])))
     fig, ax_lst = plt.subplots(grid, grid)  # a figure with a 2x2 grid of Axes
     
     k = 0
     for i in range(grid):
         for j in range(grid):
-            ax_lst[i,j].contourf(xv, yv, probs[:,k].reshape((100,100)), cmap=mpl.colormaps["Blues"])
+            ax_lst[i,j].contourf(xv, yv, plotz[:,k].reshape((100,100)), cmap=mpl.colormaps["Blues"])
             ax_lst[i,j].set_title("Component "+str(k))
             k += 1
     
@@ -429,7 +617,7 @@ def show_boundary(X_train, predictor):
     
     xv, yv = np.meshgrid(x, y)
     
-    z, probs = predictor(np.column_stack((xv.flatten(), yv.flatten())))
+    z, probs, _ = predictor(np.column_stack((xv.flatten(), yv.flatten())))
     
     
     shapes = ['o', '*', 'v', '+']
@@ -438,7 +626,7 @@ def show_boundary(X_train, predictor):
 
     
     
-    pred_labels, probs = predictor(X_train)
+    pred_labels, probs, _ = predictor(X_train)
     
     cs = [colors[int(_) % len(colors)] for _ in pred_labels]
     
@@ -458,16 +646,30 @@ def show_boundary(X_train, predictor):
     # plt.show()
     
 
-assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(dfs[1], K=4, trace=True)
+assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(dfs[0], K=4, trace=True, initial_method="gmm")
 
 show_classification(dfs[0], dfs[1], predictor)
 
-show_contour(dfs[0], predictor)
+show_contour(dfs[0], predictor, contour="density")
+
+show_contour(dfs[0], predictor, contour="probability")
 
 show_boundary(dfs[0], predictor)
 
 ### simulation study
 
+import pandas as pd
+
+ais = pd.read_csv("project/AIS.csv")
+ais_np = ais.iloc[:,2:].to_numpy()
+
+breastcancer = pd.read_csv("project/BreastCancer.csv")
+bc_np = breastcancer.iloc[:,1:(breastcancer.shape[1]-1)].to_numpy()
+
+protein = pd.read_table("project/sachs.data.txt").to_numpy()
+
+# right now ais and breastcancer fail to fit...
+assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(protein, K=4, trace=True, initial_method="gmm")
 
 ### applications
 
