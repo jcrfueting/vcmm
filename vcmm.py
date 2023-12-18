@@ -798,11 +798,53 @@ def show_missclass(X, predictor, labels, pdfname, title=None, plotgroup=0, scale
     
     plt.savefig(pdfname+".pdf")
     plt.show()
-    print('\n')
+    return np.sum(plotz)
 
 show_missclass(ais_np, predictor, ais_labels, pdfname="ais_vcmm_misclass.pdf", plotgroup=0)
 
 show_missclass(ais_np, gmm_predictor, ais_labels, pdfname="ais_gmm_misclass.pdf", plotgroup=0)
+
+
+def compare_missclass(X, pairs, predA, predB, labels, pdfname, title=None, plotgroup=0, scale=2):
+    n, d = X.shape    
+
+    _, probsA, _ = predA(X)
+    plotzA = np.abs((labels==plotgroup)+0 - probsA[:,plotgroup])
+
+    _, probsB, _ = predB(X)
+    plotzB = np.abs((labels==plotgroup)+0 - probsB[:,plotgroup])
+
+    # return plotzA, plotzB
+
+    fig = plt.figure(figsize=(10,2), dpi=600) 
+    fig, ax_lst = plt.subplots(len(pairs), 2)
+    figscale = fig.dpi/72/scale
+
+    for i in range(len(pairs)):
+        x = X[:,pairs[i][0]]
+        y = X[:,pairs[i][1]]
+
+        ax_lst[i,0].scatter(x, y, c=plotzA, cmap=mpl.colormaps["Reds"], 
+                                s = figscale/4, linewidths=figscale/16)
+        ax_lst[i,0].tick_params(axis="both", which="both", labelsize=figscale, 
+                                    width=figscale/4, length=figscale/2,
+                                    grid_linewidth=figscale/4, pad=figscale/2)
+        
+        ax_lst[i,1].scatter(x, y, c=plotzB, cmap=mpl.colormaps["Reds"], 
+                                s = figscale/4, linewidths=figscale/16)
+        ax_lst[i,1].tick_params(axis="both", which="both", labelsize=figscale, 
+                                    width=figscale/4, length=figscale/2,
+                                    grid_linewidth=figscale/4, pad=figscale/2)
+
+    fig.suptitle(title)    
+    plt.savefig(pdfname+".pdf")
+    plt.show()
+    return 0
+
+comparison_pairs = [(1,0),(2,0),(3,0)]
+compare_missclass(ais_np, comparison_pairs, gmm_predictor, predictor,  ais_labels, 
+                  pdfname="ais_comparison.pdf", title="Comparison of Missclassifications",
+                  scale=.2)
 
 ### applications
 
