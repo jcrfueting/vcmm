@@ -308,7 +308,7 @@ def initial_prob(data, K, method, supervised=False, labels=None):
     else:
         raise ValueError("Unknown method. Please specify a valid clustering method (e.g., 'kmeans').")
   
-def select_marginals(data, r):
+def select_marginals(data, r, candidates = [stats.norm, stats.t]):
     """
     initial selection of marginal distributions and parameters
     
@@ -330,7 +330,6 @@ def select_marginals(data, r):
     
     # candidates = [stats.norm, stats.gumbel_l, stats.cauchy, stats.gamma, stats.logistic, stats.lognorm, stats.skewnorm, stats.t, stats.skewcauchy, stats.loggamma]
     # restricting candidate set for now to get a first run
-    candidates = [stats.norm, stats.t]
     
     families = []
     parameters = []
@@ -363,12 +362,12 @@ def select_marginals(data, r):
     return families, parameters, u
 
 
-def RVineStructureSelect(u, trunclevel=1):
+def RVineStructureSelect(u, trunclevel=1, copulae=["bb1","bb6","bb7","bb8","clayton","frank","gaussian","gumbel","indep","joe","student"]):
     
     k = len(u)
     n, d = u[0].shape
     
-    copula_candidates = [vcl.BicopFamily.__members__[x] for x in ["bb1","bb6","bb7","bb8","clayton","frank","gaussian","gumbel","indep","joe","student"]]
+    copula_candidates = [vcl.BicopFamily.__members__[x] for x in copulae]
     fitctrl = vcl.FitControlsVinecop(family_set=copula_candidates, trunc_lvl=trunclevel)
     
     V = [vcl.Vinecop(data=u[i], controls=fitctrl) for i in range(k)]
@@ -492,7 +491,8 @@ def pair_copula_parameters(r, data, F, gamma, u, V):
   
 ## main function
 
-def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1, trace=False):
+def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1, trace=False,
+         marginals = [stats.norm, stats.t], copulas = ["bb1","bb6","bb7","bb8","clayton","frank","gaussian","gumbel","indep","joe","student"]):
     
     if (K is None) and (labels is None) :
         raise ValueError("Provide K for unsupervised VCMM or labels for supervised VCMM.")
@@ -520,8 +520,8 @@ def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="km
     pi = mixture_weights(r)
     
     # 2. initial model selection
-    F, gamma, u = select_marginals(data, r)
-    V = RVineStructureSelect(u, trunclevel=fitting_trunclevel)
+    F, gamma, u = select_marginals(data, r, candidates=marginals)
+    V = RVineStructureSelect(u, trunclevel=fitting_trunclevel, copulae=copulas)
     
     # 3. parameter estimation
     t = 0
@@ -565,8 +565,8 @@ def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="km
     c = r.argmax(axis=1)
     
     # 5. final model selection
-    F, gamma, u = select_marginals(data, r)
-    V = RVineStructureSelect(u, trunclevel=d-1)
+    F, gamma, u = select_marginals(data, r, candidates=marginals)
+    V = RVineStructureSelect(u, trunclevel=d-1, copulae=copulas)
     
     # 6. final cluster assignment
     c = posterior_prob(data, pi, F, gamma, u, V, r, supervised).argmax(axis=1)
@@ -701,7 +701,7 @@ ais_np = ais.iloc[:,2:].to_numpy()
 ais_labels = pd.factorize(ais.iloc[:,0])[0]
 
 breastcancer = pd.read_csv(os.getcwd()+"/BreastCancer.csv")
-breastcancer.dropna(inplace=True)
+breastcancer.dropna(inplace=True) 
 bc_np = breastcancer.iloc[:,1:(breastcancer.shape[1]-1)].to_numpy()
 bc_labels = pd.factorize(breastcancer.iloc[:,-1])[0]
 
@@ -713,6 +713,7 @@ assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor 
 
 # seems like we have overflow/underflow issues here
 assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(bc_np, labels=bc_labels, trace=True, initial_method="gmm", maxiter=10)
+
 
 _, _, densities = predictor(bc_np)
 
@@ -759,7 +760,49 @@ def show_probability(X, predictor, pdfname, title=None, contour="density", plotg
     
 show_probability(ais_np, predictor, pdfname="ais_vcmm_probability.pdf", contour="probability",plotgroup=0)
 
+_, _, _, _, _, _, gmm_predictor = vcmm(ais_np, labels=ais_labels, trace=True, initial_method="gmm",
+                                       marginals = [stats.norm], copulas=["gaussian"])
 
+show_probability(ais_np, gmm_predictor, pdfname="ais_gmm_probability.pdf", contour="probability",plotgroup=0)
+
+def show_missclass(X, predictor, labels, pdfname, title=None, plotgroup=0, scale=2):
+
+    n, d = X.shape    
+
+    z, probs, densities = predictor(X)
+
+    plotz = np.abs((labels==plotgroup)+0 - probs[:,plotgroup])
+
+    fig = plt.figure(figsize=(10,10), dpi=600)  # an empty figure with no axes
+    fig, ax_lst = plt.subplots(d-1, d-1)
+    figscale = fig.dpi/72/scale
+
+    k = 0
+    for i in range(d)[1:]:
+        for j in range(d-1):
+
+            if i <= j :
+                ax_lst[i-1,j].axis("off")
+                continue
+
+            x = X[:,j]
+            y = X[:,i]
+            ax_lst[i-1,j].scatter(x, y, c=plotz, cmap=mpl.colormaps["Reds"], 
+                                  s = figscale/4, linewidths=figscale/16)
+            ax_lst[i-1,j].tick_params(axis="both", which="both", labelsize=figscale, 
+                                      width=figscale/4, length=figscale*1.5,
+                                      grid_linewidth=figscale/4, pad=figscale/2)
+            k += 1
+
+    fig.suptitle(title)
+    
+    plt.savefig(pdfname+".pdf")
+    plt.show()
+    print('\n')
+
+show_missclass(ais_np, predictor, ais_labels, pdfname="ais_vcmm_misclass.pdf", plotgroup=0)
+
+show_missclass(ais_np, gmm_predictor, ais_labels, pdfname="ais_gmm_misclass.pdf", plotgroup=0)
 
 ### applications
 
