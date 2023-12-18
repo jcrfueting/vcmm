@@ -278,14 +278,15 @@ def initial_prob(data, K, method, supervised=False, labels=None):
     Output:
         z: NxK np array of assignment probabilities
     """
+    n, d = data.shape
+    
     if supervised :
         z = np.zeros((n, K))
         for i in range(n):
             z[i,int(labels[i])] = 1
+        return z
         
     if method == 'kmeans':
-        n, d = data.shape
-
         centroids_indices = np.random.choice(n, size=K, replace=False)
         centroids = data[centroids_indices]
 
@@ -300,7 +301,7 @@ def initial_prob(data, K, method, supervised=False, labels=None):
       
     elif method=="gmm":
         pi, centroids, sigmas, predictor = GaussianMixture(data, K=K)
-        z, r = predictor(data)
+        _, r = predictor(data)
         return np.apply_along_axis(lambda row : row==row.max(), 1, r)+0
       
     # More methods can be added below
@@ -493,20 +494,24 @@ def pair_copula_parameters(r, data, F, gamma, u, V):
 
 def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="kmeans", fitting_trunclevel=1, trace=False):
     
-    if (K==None) and (labels==None) :
+    if (K is None) and (labels is None) :
         raise ValueError("Provide K for unsupervised VCMM or labels for supervised VCMM.")
-      
-    elif (K!=None) and (labels!=None) :
+    
+    elif (K is not None) and (labels is None):
+        supervised = False
+        
+    elif (K is not None) and (labels is not None) :
         if K!=len(np.unique(labels)) :
             raise ValueError("Number of groups K does not match number of unique labels.")
         supervised = True
         
-    elif (K==None) and (labels!=None) :
+    elif (K is None) and (labels is not None) :
         K = len(np.unique(labels))
         supervised = True
-        
-    elif (K!=None) and (labels==None):
-        supervised = False
+    
+    if trace and supervised :
+        print("Supervised fitting of VCMM. Category proportions: ",[(labels==i).mean() for i in np.unique(labels)])
+    
     
     n, d = data.shape
 
@@ -522,35 +527,38 @@ def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="km
     t = 0
     llh = loglike(data, F, gamma, u, V, pi, r)
     
+    if trace :
+        print("initial: llh:",llh,"proportions:",pi, sep=" ")
+
     while True :
       
-      if trace :
-          print("iter:",t,"llh:",llh,"proportions:",pi, sep=" ")
-      
-      llh_old = llh
-      
-      # E step
-      r = posterior_prob(data, pi, F, gamma, u, V, r, supervised)
-      
-      # CM step 1
-      pi = mixture_weights(r)
-      
-      # CM step 2
-      gamma, u = marginal_parameters(r, data, F)
-      
-      # CM step 3
-      V = pair_copula_parameters(r, data, F, gamma, u, V)
-      
-      # stopping condition(s)
-      llh = loglike(data, F, gamma, u, V, pi, r)
-      llhdiff = (llh-llh_old)/-llh_old
-      
-      if llhdiff < tol :
-          break
-      if t >= maxiter :
-          break
+        llh_old = llh
         
-      t = t+1
+        # E step
+        r = posterior_prob(data, pi, F, gamma, u, V, r, supervised)
+        
+        # CM step 1
+        pi = mixture_weights(r)
+        
+        # CM step 2
+        gamma, u = marginal_parameters(r, data, F)
+        
+        # CM step 3
+        V = pair_copula_parameters(r, data, F, gamma, u, V)
+        
+        # stopping condition(s)
+        llh = loglike(data, F, gamma, u, V, pi, r)
+        llhdiff = (llh-llh_old)/-llh_old
+        
+        if trace :
+            print("iter:",t,"llh:",llh,"proportions:",pi, sep=" ")
+
+        if llhdiff < tol :
+            break
+        if t >= maxiter :
+            break
+        
+        t = t+1
         
     
     # 4. temporary cluster assignment
@@ -577,6 +585,7 @@ def vcmm(data, K=None, labels=None, tol=0.00001, maxiter=100, initial_method="km
 
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import matplotlib.tri as tri
 
 # taken from HW3 code provided to us
 def show_classification(X_train, X_test, VCMM_predictor):
@@ -681,20 +690,76 @@ show_contour(dfs[0], predictor, contour="probability")
 
 show_boundary(dfs[0], predictor)
 
+
+
 ### simulation study
 
 import pandas as pd
 
 ais = pd.read_csv(os.getcwd()+"/AIS.csv")
 ais_np = ais.iloc[:,2:].to_numpy()
+ais_labels = pd.factorize(ais.iloc[:,0])[0]
 
 breastcancer = pd.read_csv(os.getcwd()+"/BreastCancer.csv")
+breastcancer.dropna(inplace=True)
 bc_np = breastcancer.iloc[:,1:(breastcancer.shape[1]-1)].to_numpy()
+bc_labels = pd.factorize(breastcancer.iloc[:,-1])[0]
 
 protein = pd.read_table(os.getcwd()+"/sachs.data.txt").to_numpy()
 
-# right now ais and breastcancer fail to fit...
-assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(protein, K=4, trace=True, initial_method="gmm")
+# assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(protein, K=4, trace=True, initial_method="gmm")
+
+assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(ais_np, labels=ais_labels, trace=True, initial_method="gmm")
+
+# seems like we have overflow/underflow issues here
+assignment, marginals, marg_par, vinecop, proportions, probabilities, predictor = vcmm(bc_np, labels=bc_labels, trace=True, initial_method="gmm", maxiter=10)
+
+_, _, densities = predictor(bc_np)
+
+def show_probability(X, predictor, pdfname, title=None, contour="density", plotgroup=0, scale=2):
+
+    n, d = X.shape    
+
+    z, probs, densities = predictor(X)
+
+    if contour=="density":
+       plotz = densities
+    elif contour=="probability":
+       plotz = probs
+
+    fig = plt.figure(figsize=(10,10), dpi=600)  # an empty figure with no axes
+    fig, ax_lst = plt.subplots(d-1, d-1)
+    figscale = fig.dpi/72/scale
+
+    k = 0
+    for i in range(d)[1:]:
+        for j in range(d-1):
+
+            if i <= j :
+                ax_lst[i-1,j].axis("off")
+                continue
+
+            x = X[:,j]
+            y = X[:,i]
+            ax_lst[i-1,j].scatter(x, y, c=plotz[:,plotgroup], cmap=mpl.colormaps["cool"], 
+                                  s = figscale/4, linewidths=figscale/16)
+            ax_lst[i-1,j].tick_params(axis="both", which="both", labelsize=figscale, 
+                                      width=figscale/4, length=figscale*1.5,
+                                      grid_linewidth=figscale/4, pad=figscale/2)
+            # contour plot is unfortunately not very expressive
+            # triangles = tri.Triangulation(x, y)
+            # ax_lst[i-1,j].tricontourf(triangles, plotz[:,plotgroup], cmap=mpl.colormaps["Blues"])
+            k += 1
+
+    fig.suptitle(title)
+    
+    plt.savefig(pdfname+".pdf")
+    plt.show()
+    print('\n')
+    
+show_probability(ais_np, predictor, pdfname="ais_vcmm_probability.pdf", contour="probability",plotgroup=0)
+
+
 
 ### applications
 
