@@ -846,6 +846,71 @@ compare_missclass(ais_np, comparison_pairs, gmm_predictor, predictor,  ais_label
                   pdfname="ais_comparison.pdf", title="Comparison of Missclassifications",
                   scale=.2)
 
+
+def compare_2d(X, predA, predB, contour, title=None, file=None):
+    
+    shapes = ['o', '*', 'v', '+']
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b',
+              '#e377c2', '#7f7f7f', '#bcbd22']
+
+    xlim = [X[:,0].min(), X[:,0].max()]
+    ylim = [X[:,1].min(), X[:,1].max()]
+    
+    x = np.linspace(xlim[0], xlim[1], num=100)
+    y = np.linspace(ylim[0], ylim[1], num=100)
+    
+    xv, yv = np.meshgrid(x, y)
+    
+    zA, probsA, densitiesA = predA(np.column_stack((xv.flatten(), yv.flatten())))
+    zB, probsB, densitiesB = predB(np.column_stack((xv.flatten(), yv.flatten())))
+    
+    if contour=="density":
+       plotzA = densitiesA
+       plotzB = densitiesB
+    elif contour=="probability":
+       plotzA = probsA
+       plotzB = probsB
+
+    pred_labelsA, probs, _ = predA(X)
+    pred_labelsB, probs, _ = predB(X)
+    
+    csA = [colors[int(_) % len(colors)] for _ in pred_labelsA]
+    csB = [colors[int(_) % len(colors)] for _ in pred_labelsB]
+
+    fig = plt.figure(figsize=(10,5), dpi=600)  # an empty figure with no axes
+    fig, ax_lst = plt.subplots(5, 2)  
+    
+    # classification and boundary
+    ax_lst[0,0].scatter(X[:, 0], X[:, 1], alpha=0.5, c=csA)
+    ax_lst[0,0].contour(xv, yv, zA.reshape((100,100)), colors="blue")
+    ax_lst[0,0].set_title("GMM")
+
+    ax_lst[0,1].scatter(X[:, 0], X[:, 1], alpha=0.5, c=csB)
+    ax_lst[0,1].contour(xv, yv, zB.reshape((100,100)), colors="blue")
+    ax_lst[0,1].set_title("VCMM")
+
+    # density/probability contours
+    k = 0
+    for i in range(1, 5):
+
+        ax_lst[i,0].contourf(xv, yv, plotzA[:,k].reshape((100,100)), cmap=mpl.colormaps["Blues"])
+        #ax_lst[i,0].set_title("Component "+str(k))
+        
+        ax_lst[i,1].contourf(xv, yv, plotzB[:,k].reshape((100,100)), cmap=mpl.colormaps["Blues"])
+        #ax_lst[i,1].set_title("Component "+str(k))
+
+        k += 1
+
+    plt.savefig(file+".pdf")
+    plt.show()
+
+
+_, _, _, _, _, _, vcmm_em = vcmm(dfs[0], K=4, trace=True, initial_method="gmm")
+_, _, _, _, _, _, gmm_em = vcmm(dfs[0], K=4, trace=True, initial_method="gmm",
+                                       marginals = [stats.norm], copulas=["gaussian"])
+
+compare_2d(dfs[0], gmm_em, vcmm_em, contour="density")
+
 ### applications
 
 
